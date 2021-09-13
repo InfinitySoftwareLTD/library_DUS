@@ -1,0 +1,28 @@
+{
+    "name": "infinitysoftwareltd/library_dus",
+    "description": "transactions Scheduler",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "vickynathaiya",
+            "email": "mail2vickynathaiya@gmail.com"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "InfinitySoftwareLTD\\Library_Dus\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "InfinitySoftwareLTD\\Library_Dus\\Providers\\Library_DusServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "discard-changes": true
+    },  
+    "minimum-stability": "dev",
+    "require": {}
+}
