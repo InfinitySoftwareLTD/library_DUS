@@ -48,10 +48,10 @@ class Transactions
 	public $errMesg;
 	public $transaction_result;
 
-	public function getFee($network,$totalVoters)
+	public function getFee($network,$totalVoters,$multiPaymentLimit)
 	{	
-		$fee = '';
-		$totalFee = 0;
+		$this->fee = '';
+		$this->totalFee = 0;
 		// get fees from api
 		$client = new Client();
 		$res = $client->get(api_fee_url);
@@ -60,10 +60,10 @@ class Transactions
 			$data = json_decode($data);
 			switch ($network) {
 				case "edge" : 
-					$fee = $data->data->edge->multiPayment->min;
+					$this->fee = $data->data->edge->multiPayment->min;
 					break;
 				case "infi" : 
-					$fee = $data->data->infi->multiPayment->min;
+					$this->fee = $data->data->infi->multiPayment->min;
 					break;
 				default:
 					echo "\n network provided is not infi or edge \n";
@@ -72,14 +72,14 @@ class Transactions
 			if ($totalVoters > 0) 
 			{
 				$totalVoters = $totalVoters +1; //add beneficary
-				$FeeQuotient =  floor($totalVoters/300)+1;
-				$totalFee = $FeeQuotient * $fee;
+				$FeeQuotient =  floor($totalVoters/$multiPaymentLimit)+1;
+				$this->totalFee = $FeeQuotient * $this->fee;
 			} else 
 			{
 				echo "\n total voters is 0 !!!\n";
 			}
 		}	
-		return $totalFee;
+		return $this->totalFee;
 	}
 
     public function initScheduler() 
@@ -105,14 +105,15 @@ class Transactions
 			// delegate rank is between 1 and 25 and balance as required
 
             // get fee
-            $totalFee = $this->getFee($delegate->network, $voters->totalVoters);
-			echo "\n totalFee   = $totalFee \n";
+            $totalFee = $this->getFee($delegate->network, $voters->nbEligibleVoters, $beneficary->multiPaymentLimit);
+			$fee = $this->fee;
+			echo "\n Transactions(buildTransactions) : Fee   = $fee \n";
+			echo "\n Transactions(buildTransactions) : totalFee   = $totalFee \n";
 			if ($totalFee > $delegate->balance) {
 				$this->buildSucceed = false;
 				$this->errMesg = "buildTransactions : warning : Fee greater than delegate available balance";
 				return $this;
 			}
-			$this->fee = $totalFee;
 
 			// balanceForDistribution = delegateCurrentBalance - totalfee- maintainMInimumBalance
 			// beneficiaryAMount = balancefordistribution * beneficaryRate / 100
@@ -129,14 +130,14 @@ class Transactions
 			echo "\n beneficary rate = $this->rate \n";
 			if ($delegate->balance > $beneficary->maintainMinimumBalance ) {
 				if ($delegate->balance > $totalFee ) {
-					$remaining_balance = $delegate->balance - ($totalFee + $beneficary->maintainMinimumBalance);
+					$remaining_balance = $delegate->balance - ($totalFee + ($beneficary->maintainMinimumBalance * 100000));
 					// Beneficiary Amount
 					$beneficaryAmount = ($remaining_balance * $beneficary->rate)/100; 
 					echo "\n beneficiaryAmount = $beneficaryAmount \n";
 					// Balance to be distributed to voters
 					$amountToBeDistributed = $remaining_balance - $beneficaryAmount;
 					$this->amountToBeDistributed = $amountToBeDistributed;
-					echo "\n amount to be distributed : $amountToBeDistributed";
+					echo "\n amount to be distributed : $amountToBeDistributed \n";
 				} else {
 					echo "\n delegate balance less than fee, trying at next iteration in 1 hour \n";
 					$this->buildSucceed = false;
@@ -157,7 +158,7 @@ class Transactions
 			// Generate transaction
 			if ($votersList->eligibleVoters)
 			{
-				$indexVoter = 2;
+				$indexVoter = 1;
 				$i = 1;
 				$generated = MultiPaymentBuilder::new();
 				foreach ($votersList->eligibleVoters as $voter) {
@@ -165,18 +166,19 @@ class Transactions
 					$generated = $generated->add($voter['address'], (int)$amount);
 					$indexVoter++;
 					if ($indexVoter > $multiPaymentLimit) {
-						$generated = $generated->withFee($totalFee);
+						$generated = $generated->withFee($fee);
 						$generated = $generated->withNonce($nonce);
 						$generated = $generated->sign($delegate->passphrase);
 						$this->transactions[$i] = [ 'transactions' => [$generated->transaction->data] ];
 						$i++;
 						$indexVoter = 1;
+						$nonce++;
 						$generated = MultiPaymentBuilder::new();
 					}
 				}
 				if ($indexVoter > 1) {
 					$generated = $generated->add($beneficaryAddress,floor($beneficaryAmount));
-					$generated = $generated->withFee($totalFee);
+					$generated = $generated->withFee($fee);
 					$generated = $generated->withNonce($nonce);
 					$generated = $generated->sign($delegate->passphrase);
 					$this->transactions[$i] = [ 'transactions' => [$generated->transaction->data] ];
@@ -197,7 +199,7 @@ class Transactions
 
 	public function sendTransactions()
 	{
-
+		
 		if (!count($this->transactions)) {
 			echo "\n there is no transaction \n";
 			return false;
@@ -208,13 +210,15 @@ class Transactions
 			$response = [];
 			$client = new Client();
 			$api_url = "http://$this->peer_ip:$this->peer_port/api".'/transactions';
-			echo "\n api_url   : $api_url \n";
+			echo "\n ___________________________________________________________________ \n";
+			
 		
 			try {
 				$req = $client->post($api_url,['json'=> $transaction]);
 				$data = $req->getBody()->getContents();
 				if ($data)
 				{
+					
 					$data = json_decode($data);
 					//treating data errors
 					if (isset($data->errors))
@@ -222,10 +226,14 @@ class Transactions
 						foreach ($data->errors as $error) {
 							$response['http_data'][] = is_object($error) ? $error : $error[0];
 						}
-						echo "\n(Failed) Return Funds to Main Wallet";
-						echo "\n(Failed) to connect to the node server.";
+						echo "\n Transactions(sendTransactions) (Failed) Return Funds to Main Wallet";
+						echo "\n Transactions(sendTransactions) (Failed) to connect to the node server.";
 						$this->transaction_result = json_encode($response);
+						echo "\n Transactions(sendTransactions) response : "; 
+						echo json_encode($response, JSON_PRETTY_PRINT);
 						return false;
+					} else {
+						echo "\n Transactions(sendTransactions) transaction sent successfully \n";
 					}
 
 				}

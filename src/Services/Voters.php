@@ -20,13 +20,12 @@ use InfinitySoftwareLTD\Library_Dus\Services\Server;
 
 const base_url_infi = "https://api.infinitysolutions.io";
 const base_url_edge = "https://api.edge.infinitysolutions.io";
-const api_voters_infi_url = "/api/delegates/024844fa4b301ae6f9c514c963c18540630f1755dcca02ea9e91bae4b11d3dd1f1/voters";
-const api_voters_edge_url = "/api/delegates/024844fa4b301ae6f9c514c963c18540630f1755dcca02ea9e91bae4b11d3dd1f1/voters";
+const success = 1;
 
 // const minVoterBalance = 100000;
 		
 
-class Voters 
+class Voters
 {
 	public $eligibleVoters;
 	public $totalVoters;
@@ -37,25 +36,48 @@ class Voters
 		$this->eligibleVoters = [];
 		$this->totalVoters = 0;
 		$lockedBalance = 0;
+		$retreive = success;
+		$pageNum = 1;
+		$debug = 1;
 		$delegateAddress = $delegate->address;
 		$delegateNetwork = $delegate->network;
 		$delegatePublicKey = $delegate->publicKey;
-		$api_voters_url = base_url_edge . "/api/delegates/" . $delegatePublicKey . "/voters";
+		$api_voters_urlprefix = base_url_edge . "/api/delegates/" . $delegatePublicKey;
 
 		// get fees from api
 		if ($delegateNetwork == "infi") {
-			$api_voters_url = base_url_infi . "/api/delegates/" . $delegatePublicKey . "/voters";
+			$api_voters_urlprefix = base_url_infi . "/api/delegates/" . $delegatePublicKey;
 		}
 
 		$client = new Client();
-		$res = $client->get($api_voters_url);
-		if ($data = $res->getBody()->getContents()) 
-		{
-			$data = json_decode($data);
-			$this->totalVoters = $data->meta->totalCount;
-			if ($this->totalVoters > 0) {
+		do {
+			// build api voters url
+			$urlVotersSuffix = "/voters?transform=true&page=$pageNum&limit=100";
+			$api_voters_url = $api_voters_urlprefix . $urlVotersSuffix;
+			if ($debug) {echo "\n Voters (initEliegbleVoters) : api_voters_url : $api_voters_url \n";}
+
+			//retreive voters data
+			$res = $client->get($api_voters_url);
+			if (!($data = $res->getBody()->getContents())) 
+			{
+				//failed to retreive data
+				echo "\n Voters (initEliegbleVoters) : retreiving voters data failed !! \n";
+				$retreive = failed;
+				break;
+			} else {
+				//get page meta data
+				$data = json_decode($data);
+				if ($pageNum == 1) {
+					$this->totalVoters = $data->meta->totalCount;
+					$pageCount = $data->meta->pageCount;
+				}
+			}
+
+			$votersCount = $data->meta->count;
+			if ($votersCount > 0) {
 				$list_voters = $data->data;
 				foreach ($list_voters as $voter) {
+					$lockedBalance=0;
 					$voter_balance = (int)$voter->balance;
 					if (isset($voter->lockedBalance)) {
 						$lockedBalance = $voter->lockedBalance;
@@ -73,10 +95,12 @@ class Voters
 						'amount' => 0,
 						);
 					}
-					$this->nbEligibleVoters = count($this->eligibleVoters);	
+					
 				}
 			}
-		}
+			$pageNum++;
+		} while ($votersCount == 100);
+		$this->nbEligibleVoters = count($this->eligibleVoters);	
 		return $this;
 	}
 	
@@ -84,7 +108,7 @@ class Voters
 	{
 		//with eligibleVoters 
 		//proportion (voter balance x 100) % sum of voters balance.
-		
+		$debug = 0;
 		$this->portionByVoter = [];
 		//perform sum of eligible voters balance
 		$totalVotersBalance = 0;
@@ -97,7 +121,7 @@ class Voters
 		foreach ($this->eligibleVoters as $i => $voter) {
 			$totalVoterBalance = $voter['balance'] + $voter['lockedBalance'];
 			$portion = ($totalVoterBalance * 100) / $totalVotersBalance;
-			echo "\n portion  : $portion \n";
+			if ($debug) {echo "\n Voters(calculatePortion)  : $portion \n";}
 			$this->eligibleVoters[$i]['portion'] = $portion;
 		}
 		return $this;
